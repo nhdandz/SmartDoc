@@ -1,20 +1,22 @@
-
-# app/celery_app.py
+# celery_app.py
 from celery import Celery
 from celery.schedules import crontab
-from app.config import settings
 import os
+from decouple import config
+
+# Get configuration
+REDIS_URL = config('REDIS_URL', default='redis://localhost:6379')
 
 # Create Celery instance
 celery_app = Celery(
     "smartdoc",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=REDIS_URL,
+    backend=REDIS_URL,
     include=[
-        "app.tasks.document_tasks",
-        "app.tasks.ocr_tasks", 
-        "app.tasks.report_tasks",
-        "app.tasks.maintenance_tasks"
+        "tasks.document_tasks",
+        "tasks.ocr_tasks", 
+        "tasks.report_tasks",
+        "tasks.maintenance_tasks"
     ]
 )
 
@@ -30,23 +32,27 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,  # 25 minutes
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    broker_connection_retry_on_startup=True,
 )
 
 # Scheduled tasks
 celery_app.conf.beat_schedule = {
     # Clean up temporary files every hour
     'cleanup-temp-files': {
-        'task': 'app.tasks.maintenance_tasks.cleanup_temp_files',
+        'task': 'tasks.maintenance_tasks.cleanup_temp_files',
         'schedule': crontab(minute=0),  # Every hour
     },
     # Backup database daily at 2 AM
     'backup-database': {
-        'task': 'app.tasks.maintenance_tasks.backup_database',
+        'task': 'tasks.maintenance_tasks.backup_database',
         'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
     },
     # Update search index every 6 hours
     'update-search-index': {
-        'task': 'app.tasks.maintenance_tasks.update_search_index',
+        'task': 'tasks.maintenance_tasks.update_search_index',
         'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
     },
 }
+
+if __name__ == '__main__':
+    celery_app.start()

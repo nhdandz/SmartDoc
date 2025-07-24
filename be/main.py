@@ -9,15 +9,15 @@ import os
 from datetime import datetime
 from typing import List, Optional
 
-from app.database import get_db, engine, Base
-from app.models import User, Document, OCRResult, ChatSession, Report
-from app.schemas import *
-from app.auth import create_access_token, verify_token, hash_password, verify_password
-from app.services.document_service import DocumentService
-from app.services.ocr_service import OCRService
-from app.services.search_service import SearchService
-from app.services.qa_service import QAService
-from app.services.report_service import ReportService
+from database import get_db, engine, Base
+from models import User, Document, OCRResult, ChatSession, Report
+from schemas import *
+from auth import create_access_token, verify_token, hash_password, verify_password
+from services.document_service import DocumentService
+from services.ocr_service import OCRService
+from services.search_service import SearchService
+from services.qa_service import QAService
+from services.report_service import ReportService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -29,7 +29,7 @@ app = FastAPI(
 )
 
 # CORS middleware
-app.add_middleware(
+add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
@@ -43,7 +43,7 @@ security = HTTPBearer()
 # Static files
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+mount("/static", StaticFiles(directory="static"), name="static")
 
 # Services
 document_service = DocumentService()
@@ -68,18 +68,18 @@ async def get_current_user(
     return user
 
 # Root endpoint
-@app.get("/")
+@get("/")
 async def root():
     return {"message": "SmartDoc API is running", "version": "1.0.0"}
 
 # Health check
-@app.get("/health")
+@get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now()}
 
 # ======================= AUTH ENDPOINTS =======================
 
-@app.post("/api/auth/login")
+@post("/api/auth/login")
 async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     """Đăng nhập người dùng"""
     user = db.query(User).filter(User.email == credentials.email).first()
@@ -99,7 +99,7 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
         }
     }
 
-@app.post("/api/auth/register")
+@post("/api/auth/register")
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Đăng ký người dùng mới"""
     # Check if user exists
@@ -131,7 +131,7 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         }
     }
 
-@app.get("/api/auth/me")
+@get("/api/auth/me")
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Lấy thông tin người dùng hiện tại"""
     return {
@@ -146,7 +146,7 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 # ======================= DOCUMENT ENDPOINTS =======================
 
-@app.get("/api/documents")
+@get("/api/documents")
 async def get_documents(
     page: int = 1,
     limit: int = 10,
@@ -160,7 +160,7 @@ async def get_documents(
         db, current_user.id, page, limit, search, type_filter
     )
 
-@app.post("/api/documents/upload")
+@post("/api/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -169,7 +169,7 @@ async def upload_document(
     """Upload tài liệu mới"""
     return await document_service.upload_document(db, file, current_user.id)
 
-@app.delete("/api/documents/{document_id}")
+@delete("/api/documents/{document_id}")
 async def delete_document(
     document_id: str,
     current_user: User = Depends(get_current_user),
@@ -178,7 +178,7 @@ async def delete_document(
     """Xóa tài liệu"""
     return await document_service.delete_document(db, document_id, current_user.id)
 
-@app.post("/api/documents/{document_id}/share")
+@post("/api/documents/{document_id}/share")
 async def share_document(
     document_id: str,
     share_data: DocumentShare,
@@ -190,7 +190,7 @@ async def share_document(
 
 # ======================= OCR ENDPOINTS =======================
 
-@app.post("/api/ocr/process")
+@post("/api/ocr/process")
 async def process_ocr(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -199,7 +199,7 @@ async def process_ocr(
     """Xử lý OCR cho file ảnh/PDF"""
     return await ocr_service.process_file(db, file, current_user.id)
 
-@app.get("/api/ocr/results")
+@get("/api/ocr/results")
 async def get_ocr_results(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -207,7 +207,7 @@ async def get_ocr_results(
     """Lấy danh sách kết quả OCR"""
     return await ocr_service.get_results(db, current_user.id)
 
-@app.get("/api/ocr/results/{result_id}")
+@get("/api/ocr/results/{result_id}")
 async def get_ocr_result(
     result_id: str,
     current_user: User = Depends(get_current_user),
@@ -216,7 +216,7 @@ async def get_ocr_result(
     """Lấy chi tiết kết quả OCR"""
     return await ocr_service.get_result(db, result_id, current_user.id)
 
-@app.put("/api/ocr/results/{result_id}")
+@put("/api/ocr/results/{result_id}")
 async def update_ocr_result(
     result_id: str,
     update_data: OCRResultUpdate,
@@ -228,7 +228,7 @@ async def update_ocr_result(
 
 # ======================= SEARCH ENDPOINTS =======================
 
-@app.post("/api/search")
+@post("/api/search")
 async def search_documents(
     search_data: SearchRequest,
     current_user: User = Depends(get_current_user),
@@ -237,7 +237,7 @@ async def search_documents(
     """Tìm kiếm tài liệu"""
     return await search_service.search(db, search_data, current_user.id)
 
-@app.get("/api/search/suggestions")
+@get("/api/search/suggestions")
 async def get_search_suggestions(
     q: str,
     current_user: User = Depends(get_current_user),
@@ -248,7 +248,7 @@ async def get_search_suggestions(
 
 # ======================= Q&A ENDPOINTS =======================
 
-@app.post("/api/qa/ask")
+@post("/api/qa/ask")
 async def ask_question(
     qa_request: QARequest,
     current_user: User = Depends(get_current_user),
@@ -257,7 +257,7 @@ async def ask_question(
     """Đặt câu hỏi"""
     return await qa_service.ask_question(db, qa_request, current_user.id)
 
-@app.get("/api/qa/history")
+@get("/api/qa/history")
 async def get_qa_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -265,7 +265,7 @@ async def get_qa_history(
     """Lấy lịch sử hỏi đáp"""
     return await qa_service.get_history(db, current_user.id)
 
-@app.post("/api/qa/sessions")
+@post("/api/qa/sessions")
 async def create_chat_session(
     session_data: ChatSessionCreate,
     current_user: User = Depends(get_current_user),
@@ -274,7 +274,7 @@ async def create_chat_session(
     """Tạo phiên chat mới"""
     return await qa_service.create_session(db, session_data, current_user.id)
 
-@app.get("/api/qa/sessions/{session_id}")
+@get("/api/qa/sessions/{session_id}")
 async def get_chat_session(
     session_id: str,
     current_user: User = Depends(get_current_user),
@@ -285,7 +285,7 @@ async def get_chat_session(
 
 # ======================= REPORT ENDPOINTS =======================
 
-@app.post("/api/reports/generate")
+@post("/api/reports/generate")
 async def generate_report(
     report_config: ReportCreate,
     current_user: User = Depends(get_current_user),
@@ -294,7 +294,7 @@ async def generate_report(
     """Tạo báo cáo"""
     return await report_service.generate_report(db, report_config, current_user.id)
 
-@app.get("/api/reports")
+@get("/api/reports")
 async def get_reports(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -302,7 +302,7 @@ async def get_reports(
     """Lấy danh sách báo cáo"""
     return await report_service.get_reports(db, current_user.id)
 
-@app.get("/api/reports/{report_id}")
+@get("/api/reports/{report_id}")
 async def get_report(
     report_id: str,
     current_user: User = Depends(get_current_user),
@@ -311,7 +311,7 @@ async def get_report(
     """Lấy chi tiết báo cáo"""
     return await report_service.get_report(db, report_id, current_user.id)
 
-@app.get("/api/reports/{report_id}/download")
+@get("/api/reports/{report_id}/download")
 async def download_report(
     report_id: str,
     current_user: User = Depends(get_current_user),
@@ -322,7 +322,7 @@ async def download_report(
 
 # ======================= SETTINGS ENDPOINTS =======================
 
-@app.get("/api/settings")
+@get("/api/settings")
 async def get_settings(current_user: User = Depends(get_current_user)):
     """Lấy cài đặt hệ thống"""
     # Mock settings for now
@@ -344,7 +344,7 @@ async def get_settings(current_user: User = Depends(get_current_user)):
         }
     }
 
-@app.put("/api/settings")
+@put("/api/settings")
 async def update_settings(
     settings: dict,
     current_user: User = Depends(get_current_user)
@@ -358,7 +358,7 @@ async def update_settings(
 
 # ======================= STATS ENDPOINTS =======================
 
-@app.get("/api/stats/dashboard")
+@get("/api/stats/dashboard")
 async def get_dashboard_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -7,8 +7,8 @@ from typing import List, Dict, Any
 from uuid import UUID
 from datetime import datetime, timedelta
 
-from app.models import Document, SearchHistory, DocumentPermission
-from app.schemas import SearchRequest
+from models import Document, SearchHistory, DocumentPermission
+from schemas import SearchRequest
 
 class SearchService:
     def __init__(self):
@@ -295,9 +295,9 @@ from docx import Document as DocxDocument
 from docx.shared import Inches
 import json
 
-from app.models import Report, Document, ChatMessage
-from app.schemas import ReportCreate
-from app.config import settings
+from models import Report, Document, ChatMessage
+from schemas import ReportCreate
+from config import settings
 
 class ReportService:
     def __init__(self):

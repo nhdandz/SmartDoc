@@ -1,16 +1,16 @@
 # app/tasks/document_tasks.py
 from celery import current_task
 from sqlalchemy.orm import Session
-from app.celery_app import celery_app
-from app.database import SessionLocal
-from app.models import Document
-from app.services.qa_service import QAService
+from celery_app import celery_app
+from database import SessionLocal
+from models import Document
+from services.qa_service import QAService
 import os
 import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_app.task(bind=True)
+@celery_task(bind=True)
 def process_document_for_search(self, document_id: str):
     """Process document for search indexing"""
     
@@ -28,11 +28,11 @@ def process_document_for_search(self, document_id: str):
         
         # Extract text if not already done
         if not document.extracted_text and document.file_path and os.path.exists(document.file_path):
-            from app.services.document_service import DocumentService
+            from services.document_service import DocumentService
             doc_service = DocumentService()
             
             try:
-                extracted_text = await doc_service._extract_text_from_file(
+                extracted_text = doc_service._extract_text_from_file(
                     document.file_path, document.type
                 )
                 document.extracted_text = extracted_text
@@ -51,7 +51,7 @@ def process_document_for_search(self, document_id: str):
         # Index document for vector search
         if document.extracted_text:
             qa_service = QAService()
-            success = await qa_service.index_document(
+            success =  qa_service.index_document(
                 document.id,
                 document.extracted_text,
                 {
@@ -80,7 +80,7 @@ def process_document_for_search(self, document_id: str):
     finally:
         db.close()
 
-@celery_app.task(bind=True)
+@celery_task(bind=True)
 def batch_process_documents(self, document_ids: list):
     """Process multiple documents in batch"""
     

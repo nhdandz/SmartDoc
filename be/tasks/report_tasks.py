@@ -1,16 +1,16 @@
 # app/tasks/report_tasks.py
 from celery import current_task
 from sqlalchemy.orm import Session
-from app.celery_app import celery_app
-from app.database import SessionLocal
-from app.models import Report
-from app.services.report_service import ReportService
-from app.schemas import ReportCreate
+from celery_app import celery_app
+from database import SessionLocal
+from models import Report
+from services.report_service import ReportService
+from schemas import ReportCreate
 import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_app.task(bind=True)
+@celery_task(bind=True)
 def generate_report_task(self, report_id: str, report_config_dict: dict, user_id: str):
     """Generate report in background"""
     
@@ -32,15 +32,15 @@ def generate_report_task(self, report_id: str, report_config_dict: dict, user_id
         
         # Generate report content
         if report_config.type == "document_summary":
-            content, file_path = await report_service._generate_document_summary(
+            content, file_path =  report_service._generate_document_summary(
                 db, report_config.config, user_id
             )
         elif report_config.type == "qa_analysis":
-            content, file_path = await report_service._generate_qa_analysis(
+            content, file_path = report_service._generate_qa_analysis(
                 db, report_config.config, user_id
             )
         elif report_config.type == "activity_report":
-            content, file_path = await report_service._generate_activity_report(
+            content, file_path = report_service._generate_activity_report(
                 db, report_config.config, user_id
             )
         else:

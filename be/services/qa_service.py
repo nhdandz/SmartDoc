@@ -21,9 +21,9 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
 
-from app.models import Document, ChatSession, ChatMessage, VectorStore
-from app.schemas import QARequest, ChatSessionCreate, QASource
-from app.config import settings
+from models import Document, ChatSession, ChatMessage, VectorStore
+from schemas import QARequest, ChatSessionCreate, QASource
+from config import settings
 
 class QAService:
     def __init__(self):
