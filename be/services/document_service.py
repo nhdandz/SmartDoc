@@ -12,7 +12,7 @@ from datetime import datetime
 
 from models import Document, User, DocumentPermission
 from schemas import DocumentShare
-from config import settings
+from database import settings
 
 class DocumentService:
     def __init__(self):
@@ -71,7 +71,7 @@ class DocumentService:
                 size=self._format_file_size(file_size),
                 file_path=file_path,
                 user_id=user_id,
-                metadata={
+                doc_metadata={  # Use new column name
                     "mime_type": mime_type,
                     "file_size_bytes": file_size,
                     "upload_timestamp": datetime.now().isoformat()
@@ -83,7 +83,7 @@ class DocumentService:
             db.refresh(document)
             
             return {
-                "id": document.id,
+                "id": str(document.id),
                 "name": document.name,
                 "type": document.type,
                 "size": document.size,
@@ -146,7 +146,7 @@ class DocumentService:
         return {
             "documents": [
                 {
-                    "id": doc.id,
+                    "id": str(doc.id),
                     "name": doc.name,
                     "type": doc.type,
                     "size": doc.size,
@@ -269,7 +269,7 @@ class DocumentService:
         try:
             if document.extracted_text:
                 return {
-                    "id": document.id,
+                    "id": str(document.id),
                     "name": document.name,
                     "content": document.extracted_text,
                     "type": document.type
@@ -284,7 +284,7 @@ class DocumentService:
                 db.commit()
                 
                 return {
-                    "id": document.id,
+                    "id": str(document.id),
                     "name": document.name,
                     "content": content,
                     "type": document.type

@@ -11,7 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_task
+@celery_app.task
 def cleanup_temp_files():
     """Clean up temporary files older than 24 hours"""
     
@@ -46,7 +46,7 @@ def cleanup_temp_files():
         logger.error(f"Error during temp file cleanup: {e}")
         return {"error": str(e)}
 
-@celery_task
+@celery_app.task
 def backup_database():
     """Create database backup"""
     
@@ -99,7 +99,7 @@ def backup_database():
         logger.error(f"Database backup failed: {e}")
         return {"status": "error", "error": str(e)}
 
-@celery_task
+@celery_app.task
 def update_search_index():
     """Update search index for all documents"""
     
@@ -155,7 +155,7 @@ def update_search_index():
     finally:
         db.close()
 
-@celery_task
+@celery_app.task
 def clean_old_activity_logs():
     """Clean up activity logs older than 90 days"""
     

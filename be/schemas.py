@@ -1,14 +1,21 @@
 # app/schemas.py
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
+
+# Fix EmailStr import - use regular str if email-validator not available
+try:
+    from pydantic import EmailStr
+except ImportError:
+    # Fallback to regular str if email-validator not installed
+    EmailStr = str
 
 # ======================= USER SCHEMAS =======================
 
 class UserBase(BaseModel):
     name: str
-    email: EmailStr
+    email: str  # Changed from EmailStr to str to avoid dependency issues
     role: Optional[str] = "user"
     department: Optional[str] = None
     phone: Optional[str] = None
@@ -17,7 +24,7 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str  # Changed from EmailStr to str
     password: str
 
 class UserResponse(UserBase):
@@ -54,7 +61,7 @@ class DocumentResponse(DocumentBase):
     user_id: UUID
     is_processed: bool
     shared: bool
-    metadata: Optional[Dict[str, Any]] = None
+    doc_metadata: Optional[Dict[str, Any]] = None  # Updated field name
     
     class Config:
         from_attributes = True
@@ -63,10 +70,10 @@ class DocumentUpdate(BaseModel):
     name: Optional[str] = None
     folder: Optional[str] = None
     shared: Optional[bool] = None
-    metadata: Optional[Dict[str, Any]] = None
+    doc_metadata: Optional[Dict[str, Any]] = None  # Updated field name
 
 class DocumentShare(BaseModel):
-    user_email: str
+    user_email: str  # Changed from EmailStr to str
     permission: str = Field(..., pattern="^(read|write|admin)$")
 
 class DocumentPermissionResponse(BaseModel):
@@ -97,7 +104,7 @@ class OCRResultResponse(OCRResultBase):
     original_file: str
     process_date: datetime
     status: str
-    metadata: Optional[Dict[str, Any]] = None
+    ocr_metadata: Optional[Dict[str, Any]] = None  # Updated field name
     
     class Config:
         from_attributes = True
@@ -105,7 +112,7 @@ class OCRResultResponse(OCRResultBase):
 class OCRResultUpdate(BaseModel):
     extracted_text: Optional[str] = None
     confidence: Optional[float] = None
-    metadata: Optional[Dict[str, Any]] = None
+    ocr_metadata: Optional[Dict[str, Any]] = None  # Updated field name
 
 # ======================= SEARCH SCHEMAS =======================
 

@@ -43,7 +43,7 @@ class Document(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_processed = Column(Boolean, default=False)
     extracted_text = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    doc_metadata = Column(JSON, nullable=True)  # Changed from 'metadata' to 'doc_metadata'
     shared = Column(Boolean, default=False)
     
     # Relationships
@@ -79,7 +79,7 @@ class OCRResult(Base):
     status = Column(String(50), default="processing")  # processing, completed, failed
     engine_used = Column(String(100), default="tesseract")
     language = Column(String(10), default="vi")
-    metadata = Column(JSON, nullable=True)
+    ocr_metadata = Column(JSON, nullable=True)  # Changed from 'metadata' to 'ocr_metadata'
     
     # Relationships
     document = relationship("Document", back_populates="ocr_result")
@@ -108,7 +108,7 @@ class ChatMessage(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     sources = Column(JSON, nullable=True)  # List of sources used for the answer
     rating = Column(String(10), nullable=True)  # up, down, null
-    metadata = Column(JSON, nullable=True)
+    msg_metadata = Column(JSON, nullable=True)  # Changed from 'metadata' to 'msg_metadata'
     
     # Relationships
     session = relationship("ChatSession", back_populates="messages")
@@ -151,7 +151,7 @@ class VectorStore(Base):
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     embedding = Column(JSON, nullable=True)  # Store as JSON for simplicity
-    metadata = Column(JSON, nullable=True)
+    vec_metadata = Column(JSON, nullable=True)  # Changed from 'metadata' to 'vec_metadata'
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

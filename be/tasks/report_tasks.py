@@ -4,13 +4,13 @@ from sqlalchemy.orm import Session
 from celery_app import celery_app
 from database import SessionLocal
 from models import Report
-from services.report_service import ReportService
+from services.search_service import ReportService
 from schemas import ReportCreate
 import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_task(bind=True)
+@celery_app.task(bind=True)
 def generate_report_task(self, report_id: str, report_config_dict: dict, user_id: str):
     """Generate report in background"""
     

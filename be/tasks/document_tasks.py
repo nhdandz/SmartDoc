@@ -10,7 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_task(bind=True)
+@celery_app.task(bind=True)
 def process_document_for_search(self, document_id: str):
     """Process document for search indexing"""
     
@@ -51,7 +51,7 @@ def process_document_for_search(self, document_id: str):
         # Index document for vector search
         if document.extracted_text:
             qa_service = QAService()
-            success =  qa_service.index_document(
+            success = qa_service.index_document(
                 document.id,
                 document.extracted_text,
                 {
@@ -80,7 +80,7 @@ def process_document_for_search(self, document_id: str):
     finally:
         db.close()
 
-@celery_task(bind=True)
+@celery_app.task(bind=True)
 def batch_process_documents(self, document_ids: list):
     """Process multiple documents in batch"""
     

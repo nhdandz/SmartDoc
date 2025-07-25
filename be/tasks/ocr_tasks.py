@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@celery_task(bind=True)
+@celery_app.task(bind=True)
 def process_ocr_task(self, ocr_result_id: str, file_path: str, file_ext: str, document_id: str):
     """Process OCR in background"""
     

@@ -5,6 +5,15 @@ from sqlalchemy.orm import sessionmaker
 from decouple import config
 import os
 
+# app/auth.py
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from typing import Optional
+
+# app/config.py
+from typing import List
+
 # Database URL - supports both PostgreSQL and SQLite
 DATABASE_URL = config(
     'DATABASE_URL',
@@ -38,12 +47,7 @@ def get_db():
     finally:
         db.close()
 
-# app/auth.py
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
-from decouple import config
-from typing import Optional
+# ======================= AUTH =======================
 
 # Security configuration
 SECRET_KEY = config('SECRET_KEY', default='your-secret-key-change-this-in-production')
@@ -80,9 +84,7 @@ def verify_token(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
-# app/config.py
-from decouple import config
-from typing import List
+# ======================= CONFIG =======================
 
 class Settings:
     # Database

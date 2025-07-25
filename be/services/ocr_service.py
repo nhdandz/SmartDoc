@@ -13,9 +13,9 @@ import easyocr
 from pdf2image import convert_from_path
 import numpy as np
 
-from app.models import OCRResult, Document
-from app.schemas import OCRResultUpdate
-from app.config import settings
+from models import OCRResult, Document
+from schemas import OCRResultUpdate
+from config import settings
 
 class OCRService:
     def __init__(self):
