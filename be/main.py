@@ -13,12 +13,12 @@ from database import get_db, engine, Base
 from models import User, Document, OCRResult, ChatSession, Report
 from schemas import *
 # Fix the import paths
-from auth import create_access_token, verify_token, hash_password, verify_password
+from database import create_access_token, verify_token, hash_password, verify_password
 from services.document_service import DocumentService
 from services.ocr_service import OCRService
 from services.search_service import SearchService
 from services.qa_service import QAService
-from services.report_service import ReportService
+from services.search_service import ReportService
 
 # Create tables
 Base.metadata.create_all(bind=engine)

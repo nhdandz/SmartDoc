@@ -9,37 +9,77 @@ from uuid import UUID
 from datetime import datetime
 import json
 
-# LangChain imports
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-from langchain.vectorstores.chroma import Chroma
-from langchain.chat_models import ChatOpenAI
-from langchain.llms import Ollama
-from langchain.schema import Document as LangChainDocument
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.schema.output_parser import StrOutputParser
+# Fix imports - use relative imports or get settings from database
+try:
+    from database import settings
+except ImportError:
+    # Fallback settings if database not available
+    class FallbackSettings:
+        OPENAI_API_KEY = ""
+        ANTHROPIC_API_KEY = ""
+        DEFAULT_LLM_MODEL = "gpt-3.5-turbo"
+        CHROMA_DB_PATH = "./chroma_db"
+    settings = FallbackSettings()
 
 from models import Document, ChatSession, ChatMessage, VectorStore
 from schemas import QARequest, ChatSessionCreate, QASource
-from config import settings
+
+# Optional LangChain imports with fallbacks
+try:
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain.embeddings.openai import OpenAIEmbeddings
+    from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+    from langchain.vectorstores.chroma import Chroma
+    # Fix deprecated imports
+    try:
+        from langchain_community.chat_models import ChatOpenAI
+        from langchain_community.llms import Ollama
+    except ImportError:
+        from langchain.chat_models import ChatOpenAI
+        from langchain.llms import Ollama
+    from langchain.schema import Document as LangChainDocument
+    from langchain.prompts import ChatPromptTemplate
+    from langchain.schema.runnable import RunnablePassthrough
+    from langchain.schema.output_parser import StrOutputParser
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    print("Warning: LangChain not available, QA service will have limited functionality")
+    LANGCHAIN_AVAILABLE = False
 
 class QAService:
     def __init__(self):
-        self.embeddings = self._initialize_embeddings()
-        self.llm = self._initialize_llm()
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-        )
-        self.vector_store = self._initialize_vector_store()
+        if not LANGCHAIN_AVAILABLE:
+            print("QA Service initialized without LangChain - limited functionality")
+            self.embeddings = None
+            self.llm = None
+            self.text_splitter = None
+            self.vector_store = None
+            return
+            
+        try:
+            self.embeddings = self._initialize_embeddings()
+            self.llm = self._initialize_llm()
+            if LANGCHAIN_AVAILABLE:
+                self.text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    length_function=len,
+                )
+            self.vector_store = self._initialize_vector_store()
+        except Exception as e:
+            print(f"Warning: Could not fully initialize QA service: {e}")
+            self.embeddings = None
+            self.llm = None
+            self.text_splitter = None
+            self.vector_store = None
 
     def _initialize_embeddings(self):
         """Khởi tạo embedding model"""
+        if not LANGCHAIN_AVAILABLE:
+            return None
+            
         try:
-            if settings.OPENAI_API_KEY:
+            if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
                 return OpenAIEmbeddings(openai_api_key=settings.OPENAI_API_KEY)
             else:
                 # Fallback to local embeddings
@@ -52,10 +92,13 @@ class QAService:
 
     def _initialize_llm(self):
         """Khởi tạo LLM model"""
+        if not LANGCHAIN_AVAILABLE:
+            return None
+            
         try:
-            if settings.OPENAI_API_KEY:
+            if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
                 return ChatOpenAI(
-                    model_name=settings.DEFAULT_LLM_MODEL,
+                    model_name=getattr(settings, 'DEFAULT_LLM_MODEL', 'gpt-3.5-turbo'),
                     openai_api_key=settings.OPENAI_API_KEY,
                     temperature=0.7
                 )
@@ -68,12 +111,15 @@ class QAService:
 
     def _initialize_vector_store(self):
         """Khởi tạo vector database"""
+        if not LANGCHAIN_AVAILABLE or not self.embeddings:
+            return None
+            
         try:
-            if self.embeddings:
-                return Chroma(
-                    persist_directory=settings.CHROMA_DB_PATH,
-                    embedding_function=self.embeddings
-                )
+            chroma_path = getattr(settings, 'CHROMA_DB_PATH', './chroma_db')
+            return Chroma(
+                persist_directory=chroma_path,
+                embedding_function=self.embeddings
+            )
         except Exception as e:
             print(f"Warning: Could not initialize vector store: {e}")
             return None
@@ -81,8 +127,16 @@ class QAService:
     async def ask_question(self, db: Session, qa_request: QARequest, user_id: UUID):
         """Xử lý câu hỏi từ người dùng"""
         
-        if not self.llm:
-            raise HTTPException(status_code=500, detail="LLM chưa được cấu hình")
+        if not LANGCHAIN_AVAILABLE or not self.llm:
+            # Fallback response when LLM not available
+            return {
+                "id": "fallback-response",
+                "type": "assistant", 
+                "content": "Xin lỗi, hệ thống AI chưa được cấu hình. Vui lòng liên hệ quản trị viên để thiết lập API keys.",
+                "timestamp": datetime.now().isoformat(),
+                "sources": [],
+                "session_id": None
+            }
         
         try:
             # Get or create chat session
@@ -115,8 +169,8 @@ class QAService:
                 content=answer,
                 timestamp=datetime.now(),
                 sources=json.dumps([source.dict() for source in sources]) if sources else None,
-                metadata={
-                    "model_used": settings.DEFAULT_LLM_MODEL,
+                msg_metadata={
+                    "model_used": getattr(settings, 'DEFAULT_LLM_MODEL', 'unknown'),
                     "context_docs_count": len(relevant_docs)
                 }
             )
@@ -125,12 +179,12 @@ class QAService:
             db.refresh(assistant_message)
             
             return {
-                "id": assistant_message.id,
+                "id": str(assistant_message.id),
                 "type": "assistant",
                 "content": answer,
                 "timestamp": assistant_message.timestamp.isoformat(),
                 "sources": sources,
-                "session_id": session.id
+                "session_id": str(session.id)
             }
             
         except Exception as e:
@@ -189,45 +243,26 @@ class QAService:
                         "type": document.type
                     })
         else:
-            # Search using vector similarity if vector store is available
-            if self.vector_store:
-                try:
-                    # Search in vector store
-                    results = self.vector_store.similarity_search(
-                        question, k=5  # Get top 5 relevant chunks
-                    )
-                    
-                    for result in results:
-                        relevant_docs.append({
-                            "id": result.metadata.get("document_id", "unknown"),
-                            "title": result.metadata.get("title", "Unknown Document"),
-                            "content": result.page_content,
-                            "type": result.metadata.get("type", "text")
-                        })
-                except Exception as e:
-                    print(f"Vector search failed: {e}")
-            
             # Fallback: search by keywords in document text
-            if not relevant_docs:
-                keywords = self._extract_keywords(question)
-                for keyword in keywords:
-                    documents = db.query(Document).filter(
-                        and_(
-                            or_(
-                                Document.user_id == user_id,
-                                Document.shared == True
-                            ),
-                            Document.extracted_text.ilike(f"%{keyword}%")
-                        )
-                    ).limit(3).all()
-                    
-                    for doc in documents:
-                        relevant_docs.append({
-                            "id": str(doc.id),
-                            "title": doc.name,
-                            "content": doc.extracted_text,
-                            "type": doc.type
-                        })
+            keywords = self._extract_keywords(question)
+            for keyword in keywords:
+                documents = db.query(Document).filter(
+                    and_(
+                        or_(
+                            Document.user_id == user_id,
+                            Document.shared == True
+                        ),
+                        Document.extracted_text.ilike(f"%{keyword}%")
+                    )
+                ).limit(3).all()
+                
+                for doc in documents:
+                    relevant_docs.append({
+                        "id": str(doc.id),
+                        "title": doc.name,
+                        "content": doc.extracted_text,
+                        "type": doc.type
+                    })
         
         return relevant_docs[:5]  # Limit to top 5 documents
 
@@ -246,8 +281,16 @@ class QAService:
                 document_id=doc['id']
             ))
         
-        # Create prompt template
-        prompt_template = ChatPromptTemplate.from_template("""
+        if not LANGCHAIN_AVAILABLE or not self.llm:
+            # Simple fallback answer
+            if relevant_docs:
+                return f"Dựa trên tài liệu '{relevant_docs[0]['title']}', tôi tìm thấy thông tin liên quan nhưng cần cấu hình AI để đưa ra câu trả lời chi tiết.", sources
+            else:
+                return "Xin lỗi, tôi không tìm thấy thông tin liên quan trong tài liệu của bạn.", sources
+        
+        try:
+            # Create prompt template
+            prompt_template = ChatPromptTemplate.from_template("""
 Bạn là một trợ lý AI thông minh, giúp trả lời câu hỏi dựa trên các tài liệu được cung cấp.
 
 Ngữ cảnh từ các tài liệu:
@@ -263,8 +306,7 @@ Hướng dẫn:
 
 Câu trả lời:
 """)
-        
-        try:
+            
             # Create chain
             chain = (
                 {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
@@ -318,13 +360,13 @@ Câu trả lời:
             ).order_by(ChatMessage.timestamp.desc()).limit(4).all()
             
             session_data = {
-                "session_id": session.id,
+                "session_id": str(session.id),
                 "title": session.title,
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "recent_messages": [
                     {
-                        "id": msg.id,
+                        "id": str(msg.id),
                         "type": msg.type,
                         "content": msg.content[:100] + "..." if len(msg.content) > 100 else msg.content,
                         "timestamp": msg.timestamp.isoformat()
@@ -348,7 +390,7 @@ Câu trả lời:
         db.refresh(session)
         
         return {
-            "id": session.id,
+            "id": str(session.id),
             "title": session.title,
             "created_at": session.created_at.isoformat(),
             "updated_at": session.updated_at.isoformat(),
@@ -370,13 +412,13 @@ Câu trả lời:
         ).order_by(ChatMessage.timestamp.asc()).all()
         
         return {
-            "id": session.id,
+            "id": str(session.id),
             "title": session.title,
             "created_at": session.created_at.isoformat(),
             "updated_at": session.updated_at.isoformat(),
             "messages": [
                 {
-                    "id": msg.id,
+                    "id": str(msg.id),
                     "type": msg.type,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
@@ -389,7 +431,8 @@ Câu trả lời:
     async def index_document(self, document_id: UUID, document_text: str, document_metadata: dict):
         """Đánh index tài liệu vào vector store"""
         
-        if not self.vector_store:
+        if not self.vector_store or not self.text_splitter:
+            print(f"Vector store not available, skipping indexing for document {document_id}")
             return False
         
         try:

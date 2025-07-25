@@ -15,7 +15,7 @@ import numpy as np
 
 from models import OCRResult, Document
 from schemas import OCRResultUpdate
-from config import settings
+from database import settings
 
 class OCRService:
     def __init__(self):
