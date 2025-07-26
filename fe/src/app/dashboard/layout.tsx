@@ -13,10 +13,13 @@ import {
   LogOut,
   X,
   Menu,
-  Bell
+  Bell,
+  AlertCircle
 } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 import { User } from '@/types'
+import { apiService } from '@/lib/api'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -35,32 +38,101 @@ const navigation = [
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [user, setUser] = useState<User | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [connectionError, setConnectionError] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
+    checkAuth()
+  }, [router])
+
+  const checkAuth = async () => {
     const token = localStorage.getItem('token')
+    const savedUser = localStorage.getItem('user')
+    
     if (!token) {
       router.push('/')
       return
     }
-    // Mock user data
-    setUser({
-      name: 'Nguyễn Văn A',
-      email: 'nguyen.a@company.com',
-      role: 'user'
-    })
-  }, [router])
 
-  const handleLogout = () => {
+    // Try to use saved user first
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser))
+      } catch (e) {
+        console.error('Error parsing saved user:', e)
+      }
+    }
+
+    // Verify with API
+    try {
+      const response = await apiService.getCurrentUser()
+      
+      if (response.success && response.data) {
+        setUser(response.data)
+        localStorage.setItem('user', JSON.stringify(response.data))
+        setConnectionError(false)
+      } else {
+        console.error('Auth verification failed:', response.error)
+        // If API call fails but we have a token, try to continue with saved user
+        if (!savedUser) {
+          handleLogout()
+        } else {
+          setConnectionError(true)
+          toast.error('Không thể kết nối đến server, sử dụng dữ liệu đã lưu')
+        }
+      }
+    } catch (error) {
+      console.error('Auth check error:', error)
+      if (!savedUser) {
+        handleLogout()
+      } else {
+        setConnectionError(true)
+        toast.error('Không thể kết nối đến server')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      await apiService.logout()
+    } catch (error) {
+      console.error('Logout error:', error)
+    }
+    
     localStorage.removeItem('token')
+    localStorage.removeItem('user')
     router.push('/')
+  }
+
+  if (isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center" style={{ background: '#edeffa' }}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Đang xác thực...</p>
+        </div>
+      </div>
+    )
   }
 
   if (!user) {
     return (
-      <div className="h-full flex items-center justify-center" style={{ background: '#edeffa' }}>
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="h-screen flex items-center justify-center" style={{ background: '#edeffa' }}>
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Lỗi xác thực</h2>
+          <p className="text-gray-600 mb-4">Vui lòng đăng nhập lại</p>
+          <button 
+            onClick={() => router.push('/')}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Về trang đăng nhập
+          </button>
+        </div>
       </div>
     )
   }
@@ -72,6 +144,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <div className="h-screen bg-gray-100 flex" style={{ background: '#edeffa' }}>
+      {/* Connection Error Banner */}
+      {connectionError && (
+        <div className="fixed top-0 left-0 right-0 bg-yellow-500 text-white px-4 py-2 text-center text-sm z-50">
+          <AlertCircle className="inline w-4 h-4 mr-2" />
+          Không thể kết nối đến server. Một số tính năng có thể bị hạn chế.
+        </div>
+      )}
+
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div 
@@ -83,7 +163,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Sidebar */}
       <div className={clsx(
         'fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-gray-200 lg:translate-x-0 transition-transform lg:static lg:inset-auto',
-        sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+        connectionError ? 'mt-10' : ''
       )}>
         <div className="flex flex-col h-full">
           {/* Header */}
@@ -140,6 +221,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <p className="text-xs text-gray-500 truncate">
                   {user.email}
                 </p>
+                {connectionError && (
+                  <p className="text-xs text-yellow-600">Chế độ offline</p>
+                )}
               </div>
             </div>
             <button
@@ -156,7 +240,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
+        <header className={clsx(
+          "bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0",
+          connectionError ? 'mt-10' : ''
+        )}>
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <button
@@ -173,6 +260,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                     type="text"
                     placeholder="Tìm kiếm tài liệu..."
                     className="pl-10 pr-4 py-2 w-96 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={connectionError}
                   />
                 </div>
               </div>

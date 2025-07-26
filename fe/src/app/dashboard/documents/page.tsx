@@ -14,21 +14,15 @@ import {
   Edit3,
   Share2,
   X,
-  Plus
+  Plus,
+  Loader2,
+  AlertCircle
 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
-
-interface Document {
-  id: string
-  name: string
-  type: string
-  size: string
-  uploadDate: Date
-  author: string
-  folder: string
-  shared?: boolean
-}
+import { apiService } from '@/lib/api'
+import { Document as DocumentType, DocumentsResponse } from '@/types'
+import { formatDateSafe, handleApiResponse } from '@/lib/apiUtils'
 
 interface Folder {
   id: string
@@ -37,7 +31,7 @@ interface Folder {
 }
 
 export default function DocumentsPage() {
-  const [documents, setDocuments] = useState<Document[]>([])
+  const [documents, setDocuments] = useState<DocumentType[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedFolder, setSelectedFolder] = useState('Tất cả')
@@ -46,79 +40,117 @@ export default function DocumentsPage() {
   const [newFolderName, setNewFolderName] = useState('')
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({})
 
-  // Initialize with mock data
+  // Load documents from API
   useEffect(() => {
-    setFolders([
-      { id: 'all', name: 'Tất cả', documentCount: 0 },
-      { id: 'finance', name: 'Tài chính', documentCount: 1 },
-      { id: 'hr', name: 'Nhân sự', documentCount: 1 },
-      { id: 'operations', name: 'Vận hành', documentCount: 1 },
-      { id: 'marketing', name: 'Marketing', documentCount: 0 },
-    ])
-
-    setDocuments([
-      {
-        id: '1',
-        name: 'Báo cáo tài chính Q4 2023.pdf',
-        type: 'PDF',
-        size: '2.4 MB',
-        uploadDate: new Date('2024-01-15'),
-        author: 'Nguyễn Văn A',
-        folder: 'Tài chính'
-      },
-      {
-        id: '2',
-        name: 'Hợp đồng lao động mẫu.docx',
-        type: 'DOCX',
-        size: '156 KB',
-        uploadDate: new Date('2024-01-14'),
-        author: 'Trần Thị B',
-        folder: 'Nhân sự'
-      },
-      {
-        id: '3',
-        name: 'Quy trình vận hành.pdf',
-        type: 'PDF',
-        size: '1.8 MB',
-        uploadDate: new Date('2024-01-13'),
-        author: 'Lê Văn C',
-        folder: 'Vận hành'
-      }
-    ])
+    loadDocuments()
   }, [])
 
-  // Update folder document counts
+  const loadDocuments = async () => {
+    setIsLoading(true)
+    try {
+      const response = await apiService.getDocuments({
+        page: 1,
+        limit: 100,
+        search: searchTerm || undefined
+      })
+
+      handleApiResponse(
+        response,
+        (data) => {
+          console.log('Documents loaded:', data)
+          const documentsData = data.documents || []
+          setDocuments(documentsData)
+          
+          // Create folder list from documents with proper typing
+          const folderCounts = documentsData.reduce((acc: Record<string, number>, doc: DocumentType) => {
+            const folder = doc.folder || 'Tài liệu chung'
+            acc[folder] = (acc[folder] || 0) + 1
+            return acc
+          }, {})
+
+          const dynamicFolders = Object.entries(folderCounts).map(([name, count]) => ({
+            id: name.toLowerCase().replace(/\s+/g, '-'),
+            name,
+            documentCount: count
+          }))
+
+          setFolders([
+            { id: 'all', name: 'Tất cả', documentCount: documentsData.length },
+            ...dynamicFolders
+          ])
+        },
+        (error) => {
+          console.error('Failed to load documents:', error)
+          toast.error(error || 'Không thể tải danh sách tài liệu')
+        }
+      )
+    } catch (error) {
+      console.error('Error loading documents:', error)
+      toast.error('Lỗi khi tải danh sách tài liệu')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Search effect
   useEffect(() => {
-    setFolders(prevFolders => 
-      prevFolders.map(folder => ({
-        ...folder,
-        documentCount: folder.name === 'Tất cả' 
-          ? documents.length 
-          : documents.filter(doc => doc.folder === folder.name).length
-      }))
-    )
-  }, [documents])
+    const delayedSearch = setTimeout(() => {
+      if (searchTerm !== '') {
+        loadDocuments()
+      }
+    }, 500)
+
+    return () => clearTimeout(delayedSearch)
+  }, [searchTerm])
 
   // File upload handler
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    acceptedFiles.forEach((file) => {
-      const newDoc: Document = {
-        id: Date.now().toString() + Math.random(),
-        name: file.name,
-        type: file.type.includes('pdf') ? 'PDF' : 
-              file.type.includes('word') || file.name.endsWith('.docx') ? 'DOCX' :
-              file.type.includes('image') ? 'Image' : 'File',
-        size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-        uploadDate: new Date(),
-        author: 'Người dùng hiện tại',
-        folder: selectedFolder === 'Tất cả' ? 'Tài liệu chung' : selectedFolder
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return
+
+    setIsUploading(true)
+    const uploadPromises = acceptedFiles.map(async (file) => {
+      try {
+        console.log('Uploading file:', file.name)
+        setUploadProgress(prev => ({ ...prev, [file.name]: 0 }))
+        
+        const response = await apiService.uploadDocument(file)
+        
+        if (response.success) {
+          console.log('Upload successful:', response.data)
+          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }))
+          toast.success(`Tải lên ${file.name} thành công!`)
+          return response.data
+        } else {
+          console.error('Upload failed:', response.error)
+          toast.error(`Lỗi tải lên ${file.name}: ${response.error}`)
+          return null
+        }
+      } catch (error) {
+        console.error('Upload error:', error)
+        toast.error(`Lỗi tải lên ${file.name}`)
+        return null
+      } finally {
+        setUploadProgress(prev => {
+          const newProgress = { ...prev }
+          delete newProgress[file.name]
+          return newProgress
+        })
       }
-      setDocuments(prev => [newDoc, ...prev])
-      toast.success(`Tải lên ${file.name} thành công!`)
     })
-    setShowUploadModal(false)
-  }, [selectedFolder])
+
+    try {
+      await Promise.all(uploadPromises)
+      // Reload documents after upload
+      await loadDocuments()
+    } finally {
+      setIsUploading(false)
+      setShowUploadModal(false)
+    }
+  }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -128,7 +160,8 @@ export default function DocumentsPage() {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'image/*': ['.jpg', '.jpeg', '.png'],
       'text/plain': ['.txt']
-    }
+    },
+    disabled: isUploading
   })
 
   // Create new folder
@@ -156,30 +189,46 @@ export default function DocumentsPage() {
   }
 
   // Document actions
-  const handleViewDocument = (doc: Document) => {
+  const handleViewDocument = (doc: DocumentType) => {
     toast(`Đang mở ${doc.name}...`)
+    // TODO: Implement document viewer
   }
 
-  const handleDownloadDocument = (doc: Document) => {
+  const handleDownloadDocument = (doc: DocumentType) => {
     toast.success(`Đang tải xuống ${doc.name}...`)
+    // TODO: Implement download
   }
 
-  const handleDeleteDocument = (docId: string) => {
+  const handleDeleteDocument = async (docId: string) => {
     const doc = documents.find(d => d.id === docId)
-    if (doc) {
-      setDocuments(prev => prev.filter(d => d.id !== docId))
-      toast.success(`Đã xóa ${doc.name}`)
+    if (!doc) return
+
+    if (!confirm(`Bạn có chắc muốn xóa "${doc.name}"?`)) return
+
+    try {
+      const response = await apiService.deleteDocument(docId)
+      
+      if (response.success) {
+        setDocuments(prev => prev.filter(d => d.id !== docId))
+        toast.success(`Đã xóa ${doc.name}`)
+      } else {
+        toast.error(response.error || 'Không thể xóa tài liệu')
+      }
+    } catch (error) {
+      console.error('Delete error:', error)
+      toast.error('Lỗi khi xóa tài liệu')
     }
   }
 
-  const handleShareDocument = (doc: Document) => {
+  const handleShareDocument = async (doc: DocumentType) => {
+    // Mock share for now
     setDocuments(prev => prev.map(d => 
       d.id === doc.id ? { ...d, shared: !d.shared } : d
     ))
     toast.success(`${doc.shared ? 'Hủy chia sẻ' : 'Chia sẻ'} ${doc.name}`)
   }
 
-  const handleBulkAction = (action: 'delete' | 'move' | 'share') => {
+  const handleBulkAction = async (action: 'delete' | 'move' | 'share') => {
     if (selectedDocuments.length === 0) {
       toast.error('Vui lòng chọn ít nhất một tài liệu')
       return
@@ -187,8 +236,17 @@ export default function DocumentsPage() {
 
     switch (action) {
       case 'delete':
-        setDocuments(prev => prev.filter(doc => !selectedDocuments.includes(doc.id)))
-        toast.success(`Đã xóa ${selectedDocuments.length} tài liệu`)
+        if (!confirm(`Bạn có chắc muốn xóa ${selectedDocuments.length} tài liệu?`)) return
+        
+        try {
+          const deletePromises = selectedDocuments.map(id => apiService.deleteDocument(id))
+          await Promise.all(deletePromises)
+          
+          setDocuments(prev => prev.filter(doc => !selectedDocuments.includes(doc.id)))
+          toast.success(`Đã xóa ${selectedDocuments.length} tài liệu`)
+        } catch (error) {
+          toast.error('Lỗi khi xóa tài liệu')
+        }
         break
       case 'share':
         setDocuments(prev => prev.map(doc => 
@@ -205,11 +263,30 @@ export default function DocumentsPage() {
 
   // Filter documents
   const filteredDocuments = documents.filter(doc => {
-    const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         doc.author.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesFolder = selectedFolder === 'Tất cả' || doc.folder === selectedFolder
     return matchesSearch && matchesFolder
   })
+
+  const formatDate = (dateString: string | undefined) => {
+    return formatDateSafe(dateString)
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Quản lý văn bản</h1>
+            <p className="text-gray-600">Đang tải...</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -232,12 +309,45 @@ export default function DocumentsPage() {
           <button 
             className="btn btn-primary"
             onClick={() => setShowUploadModal(true)}
+            disabled={isUploading}
           >
-            <Upload className="h-4 w-4 mr-2" />
-            Tải lên
+            {isUploading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Đang tải lên...
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4 mr-2" />
+                Tải lên
+              </>
+            )}
           </button>
         </div>
       </div>
+
+      {/* Upload Progress */}
+      {Object.keys(uploadProgress).length > 0 && (
+        <div className="card p-4">
+          <h3 className="text-sm font-medium text-gray-900 mb-3">Đang tải lên</h3>
+          <div className="space-y-2">
+            {Object.entries(uploadProgress).map(([filename, progress]) => (
+              <div key={filename}>
+                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                  <span className="truncate">{filename}</span>
+                  <span>{progress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Folders */}
       <div className="card p-6">
@@ -281,6 +391,17 @@ export default function DocumentsPage() {
             >
               <Filter className="h-4 w-4 mr-2" />
               {viewMode === 'grid' ? 'Dạng danh sách' : 'Dạng lưới'}
+            </button>
+            <button 
+              onClick={loadDocuments}
+              className="btn btn-secondary"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                'Làm mới'
+              )}
             </button>
           </div>
         </div>
@@ -349,6 +470,9 @@ export default function DocumentsPage() {
                       {doc.shared && (
                         <div className="w-2 h-2 bg-green-500 rounded-full mr-2 mt-1" title="Đã chia sẻ" />
                       )}
+                      {doc.is_processed && (
+                        <div className="w-2 h-2 bg-blue-500 rounded-full mr-2 mt-1" title="Đã xử lý" />
+                      )}
                       <button className="p-1 text-gray-400 hover:text-gray-600">
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -357,9 +481,8 @@ export default function DocumentsPage() {
                   <h3 className="font-medium text-gray-900 mb-2 line-clamp-2">{doc.name}</h3>
                   <div className="text-xs text-gray-500 space-y-1">
                     <p>{doc.size} • {doc.type}</p>
-                    <p>Tác giả: {doc.author}</p>
-                    <p>Thư mục: {doc.folder}</p>
-                    <p>Ngày: {doc.uploadDate.toLocaleDateString('vi-VN')}</p>
+                    <p>Thư mục: {doc.folder || 'Tài liệu chung'}</p>
+                    <p>Ngày: {formatDate(doc.upload_date)}</p>
                   </div>
                   <div className="flex items-center justify-between mt-4">
                     <div className="flex space-x-1">
@@ -396,11 +519,7 @@ export default function DocumentsPage() {
                         <Edit3 className="h-4 w-4" />
                       </button>
                       <button 
-                        onClick={() => {
-                          if (confirm(`Bạn có chắc muốn xóa "${doc.name}"?`)) {
-                            handleDeleteDocument(doc.id)
-                          }
-                        }}
+                        onClick={() => handleDeleteDocument(doc.id)}
                         className="p-1 text-gray-400 hover:text-red-600"
                         title="Xóa"
                       >
@@ -430,13 +549,15 @@ export default function DocumentsPage() {
                       {doc.shared && (
                         <div className="w-2 h-2 bg-green-500 rounded-full" title="Đã chia sẻ" />
                       )}
+                      {doc.is_processed && (
+                        <div className="w-2 h-2 bg-blue-500 rounded-full" title="Đã xử lý" />
+                      )}
                     </div>
                     <div className="flex items-center gap-4 text-xs text-gray-500 mt-1">
                       <span>{doc.size}</span>
                       <span>{doc.type}</span>
-                      <span>{doc.author}</span>
-                      <span>{doc.folder}</span>
-                      <span>{doc.uploadDate.toLocaleDateString('vi-VN')}</span>
+                      <span>{doc.folder || 'Tài liệu chung'}</span>
+                      <span>{formatDate(doc.upload_date)}</span>
                     </div>
                   </div>
                   <div className="flex items-center space-x-1">
@@ -464,11 +585,7 @@ export default function DocumentsPage() {
                       <Share2 className="h-4 w-4" />
                     </button>
                     <button 
-                      onClick={() => {
-                        if (confirm(`Bạn có chắc muốn xóa "${doc.name}"?`)) {
-                          handleDeleteDocument(doc.id)
-                        }
-                      }}
+                      onClick={() => handleDeleteDocument(doc.id)}
                       className="p-2 text-gray-400 hover:text-red-600"
                       title="Xóa"
                     >
@@ -496,6 +613,7 @@ export default function DocumentsPage() {
             <button 
               onClick={() => setShowUploadModal(true)}
               className="btn btn-primary"
+              disabled={isUploading}
             >
               <Upload className="h-4 w-4 mr-2" />
               Tải lên tài liệu
@@ -513,6 +631,7 @@ export default function DocumentsPage() {
               <button 
                 onClick={() => setShowUploadModal(false)}
                 className="text-gray-400 hover:text-gray-600"
+                disabled={isUploading}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -520,13 +639,21 @@ export default function DocumentsPage() {
             <div
               {...getRootProps()}
               className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+                isDragActive ? 'border-blue-500 bg-blue-50' : 
+                isUploading ? 'border-gray-200 bg-gray-50' :
+                'border-gray-300 hover:border-gray-400'
               }`}
             >
               <input {...getInputProps()} />
-              <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              {isUploading ? (
+                <Loader2 className="h-12 w-12 text-gray-400 mx-auto mb-4 animate-spin" />
+              ) : (
+                <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              )}
               {isDragActive ? (
                 <p className="text-blue-600">Thả tài liệu vào đây...</p>
+              ) : isUploading ? (
+                <p className="text-gray-600">Đang tải lên...</p>
               ) : (
                 <div>
                   <p className="text-gray-600 mb-2">Kéo thả tài liệu hoặc click để chọn</p>
@@ -538,8 +665,9 @@ export default function DocumentsPage() {
               <button 
                 onClick={() => setShowUploadModal(false)}
                 className="btn btn-secondary"
+                disabled={isUploading}
               >
-                Hủy
+                {isUploading ? 'Đang tải lên...' : 'Hủy'}
               </button>
             </div>
           </div>

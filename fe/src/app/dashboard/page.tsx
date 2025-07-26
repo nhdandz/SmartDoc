@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { 
   Plus, 
@@ -20,10 +20,14 @@ import {
   Clock,
   Menu,
   X,
-  Send
+  Send,
+  Loader2,
+  AlertCircle
 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
+import { apiService } from '@/lib/api'
+import { ChatMessage } from '@/types'
 
 type TabType = 'sources' | 'chat' | 'studio'
 
@@ -36,13 +40,6 @@ interface Source {
   status: 'processing' | 'ready' | 'error'
 }
 
-interface ChatMessage {
-  id: string
-  type: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-}
-
 export default function Dashboard() {
   const router = useRouter()
   const [sources, setSources] = useState<Source[]>([])
@@ -52,35 +49,123 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('sources')
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({})
+  const [dashboardStats, setDashboardStats] = useState<any>(null)
 
-  // File upload handler
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    acceptedFiles.forEach((file) => {
-      const newSource: Source = {
-        id: Date.now().toString() + Math.random(),
-        name: file.name,
-        type: file.type.includes('pdf') ? 'PDF' : 
-              file.type.includes('image') ? 'Image' :
-              file.type.includes('audio') ? 'Audio' : 'Document',
-        size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-        uploadDate: new Date(),
-        status: 'processing'
+  // Load dashboard data
+  useEffect(() => {
+    loadDashboardData()
+  }, [])
+
+  const loadDashboardData = async () => {
+    try {
+      const response = await apiService.getDashboardStats()
+      if (response.success && response.data) {
+        const data = response.data
+        setDashboardStats(data)
+        
+        // Convert recent documents to sources format with safe access
+        const recentDocs = data.recent_documents
+        if (recentDocs && Array.isArray(recentDocs)) {
+          const documentSources = recentDocs.map((doc: any) => ({
+            id: doc.id || `doc-${Date.now()}-${Math.random()}`,
+            name: doc.name || 'Unknown Document',
+            type: doc.type || 'Document',
+            size: doc.size || '0 KB',
+            uploadDate: new Date(doc.upload_date || doc.uploadDate || Date.now()),
+            status: 'ready' as const
+          }))
+          setSources(documentSources)
+        }
+      } else {
+        console.log('Dashboard stats not available:', response.error)
       }
-      
-      setSources(prev => [newSource, ...prev])
-      toast.success(`Đang xử lý ${file.name}...`)
-      
-      // Simulate processing
-      setTimeout(() => {
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error)
+    }
+  }
+
+  // File upload handler - now using real API
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return
+
+    setIsUploading(true)
+    
+    const uploadPromises = acceptedFiles.map(async (file) => {
+      try {
+        console.log('Uploading file:', file.name)
+        setUploadProgress(prev => ({ ...prev, [file.name]: 0 }))
+        
+        // Create temporary source entry
+        const tempSource: Source = {
+          id: `temp-${Date.now()}-${Math.random()}`,
+          name: file.name,
+          type: file.type.includes('pdf') ? 'PDF' : 
+                file.type.includes('image') ? 'Image' :
+                file.type.includes('audio') ? 'Audio' : 'Document',
+          size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+          uploadDate: new Date(),
+          status: 'processing'
+        }
+        
+        setSources(prev => [tempSource, ...prev])
+        
+        // Upload via API
+        const response = await apiService.uploadDocument(file)
+        
+        if (response.success && response.data) {
+          console.log('Upload successful:', response.data)
+          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }))
+          
+          // Update source with real data
+          setSources(prev => prev.map(source => 
+            source.id === tempSource.id 
+              ? {
+                  ...source,
+                  id: response.data!.id,
+                  status: 'ready' as const,
+                  size: response.data!.size || source.size
+                }
+              : source
+          ))
+          
+          toast.success(`Tải lên ${file.name} thành công!`)
+        } else {
+          console.error('Upload failed:', response.error)
+          // Update source to error state
+          setSources(prev => prev.map(source => 
+            source.id === tempSource.id 
+              ? { ...source, status: 'error' as const }
+              : source
+          ))
+          toast.error(`Lỗi tải lên ${file.name}: ${response.error}`)
+        }
+      } catch (error) {
+        console.error('Upload error:', error)
+        toast.error(`Lỗi tải lên ${file.name}`)
+        
+        // Update source to error state
         setSources(prev => prev.map(source => 
-          source.id === newSource.id 
-            ? { ...source, status: 'ready' as const }
+          source.name === file.name && source.status === 'processing'
+            ? { ...source, status: 'error' as const }
             : source
         ))
-        toast.success(`${file.name} đã sẵn sàng!`)
-      }, 2000 + Math.random() * 3000)
+      } finally {
+        setUploadProgress(prev => {
+          const newProgress = { ...prev }
+          delete newProgress[file.name]
+          return newProgress
+        })
+      }
     })
-    setShowUpload(false)
+
+    try {
+      await Promise.all(uploadPromises)
+    } finally {
+      setIsUploading(false)
+      setShowUpload(false)
+    }
   }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -90,12 +175,15 @@ export default function Dashboard() {
       'text/plain': ['.txt'],
       'text/markdown': ['.md'],
       'audio/*': ['.mp3', '.wav', '.m4a'],
-      'image/*': ['.jpg', '.jpeg', '.png']
-    }
+      'image/*': ['.jpg', '.jpeg', '.png'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+    },
+    disabled: isUploading
   })
 
-  // Chat handler
-  const handleSendMessage = () => {
+  // Chat handler - enhanced with real context and proper type safety
+  const handleSendMessage = async () => {
     if (!chatMessage.trim() || isSendingMessage) return
     if (sources.filter(s => s.status === 'ready').length === 0) {
       toast.error('Vui lòng tải lên ít nhất một nguồn trước khi chat!')
@@ -110,20 +198,61 @@ export default function Dashboard() {
     }
 
     setChatMessages(prev => [...prev, userMessage])
+    const currentQuestion = chatMessage
     setChatMessage('')
     setIsSendingMessage(true)
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: ChatMessage = {
+    try {
+      // Get ready source IDs for context
+      const readySourceIds = sources
+        .filter(s => s.status === 'ready')
+        .map(s => s.id)
+      
+      const response = await apiService.askQuestion({
+        question: currentQuestion,
+        context: readySourceIds
+      })
+
+      if (response.success && response.data) {
+        // Type guard to ensure we have the required data
+        const responseData = response.data
+        
+        const aiMessage: ChatMessage = {
+          id: responseData.id || (Date.now() + 1).toString(),
+          type: 'assistant',
+          content: responseData.content || 'Không có phản hồi từ hệ thống.',
+          timestamp: responseData.timestamp 
+            ? (typeof responseData.timestamp === 'string' 
+                ? new Date(responseData.timestamp) 
+                : responseData.timestamp)
+            : new Date(),
+          sources: responseData.sources,
+          rating: responseData.rating,
+          session_id: responseData.session_id
+        }
+        setChatMessages(prev => [...prev, aiMessage])
+      } else {
+        // Fallback to mock response if API fails
+        const aiMessage: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          type: 'assistant',
+          content: `Dựa trên ${sources.filter(s => s.status === 'ready').length} nguồn đã tải lên, tôi đang xử lý câu hỏi: "${currentQuestion}".\n\nHiện tại hệ thống AI đang được cấu hình. Vui lòng thử lại sau.`,
+          timestamp: new Date()
+        }
+        setChatMessages(prev => [...prev, aiMessage])
+      }
+    } catch (error) {
+      console.error('Chat error:', error)
+      const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: `Dựa trên ${sources.filter(s => s.status === 'ready').length} nguồn đã tải lên, tôi có thể trả lời câu hỏi của bạn: "${userMessage.content}".\n\nĐây là câu trả lời được tạo từ nội dung các tài liệu bạn đã cung cấp. Bạn có thể hỏi thêm về bất kỳ thông tin nào khác trong tài liệu.`,
+        content: 'Xin lỗi, tôi không thể trả lời câu hỏi này lúc này. Vui lòng thử lại sau.',
         timestamp: new Date()
       }
-      setChatMessages(prev => [...prev, aiMessage])
+      setChatMessages(prev => [...prev, errorMessage])
+    } finally {
       setIsSendingMessage(false)
-    }, 1500 + Math.random() * 2000)
+    }
   }
 
   // Audio overview handler
@@ -182,7 +311,7 @@ export default function Dashboard() {
         {/* Header Actions */}
         <div className="flex items-center gap-2 lg:gap-3">
           <div className="hidden sm:block bg-white px-3 py-1 rounded border text-xs font-medium">
-            🎉 Mới! Chia sẻ công khai
+            🎉 Mới! Tải lên tài liệu thật
           </div>
           <button 
             onClick={() => toast('Tính năng chia sẻ sẽ sớm có!')}
@@ -201,6 +330,31 @@ export default function Dashboard() {
           <div className="w-8 h-8 lg:w-10 lg:h-10 bg-gray-300 rounded-full"></div>
         </div>
       </header>
+
+      {/* Upload Progress */}
+      {Object.keys(uploadProgress).length > 0 && (
+        <div className="bg-white border-b border-gray-200 p-4">
+          <div className="max-w-7xl mx-auto">
+            <h3 className="text-sm font-medium text-gray-900 mb-3">Đang tải lên</h3>
+            <div className="space-y-2">
+              {Object.entries(uploadProgress).map(([filename, progress]) => (
+                <div key={filename}>
+                  <div className="flex justify-between text-sm text-gray-600 mb-1">
+                    <span className="truncate">{filename}</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                      style={{ width: `${progress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mobile Tab Navigation */}
       <div className="lg:hidden bg-white border-b border-gray-200 flex-shrink-0">
@@ -264,9 +418,14 @@ export default function Dashboard() {
                 <button 
                   className="btn-round btn-ghost flex-1"
                   onClick={() => setShowUpload(true)}
+                  disabled={isUploading}
                 >
-                  <Plus className="w-4 h-4" />
-                  Thêm
+                  {isUploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  {isUploading ? 'Đang tải...' : 'Thêm'}
                 </button>
                 <button 
                   onClick={handleExplore}
@@ -283,7 +442,17 @@ export default function Dashboard() {
                   {sources.map((source) => (
                     <div key={source.id} className="p-3 bg-gray-50 rounded-lg">
                       <div className="flex items-start gap-3">
-                        <FileText className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                        <div className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                          source.status === 'processing' ? 'animate-spin' : ''
+                        }`}>
+                          {source.status === 'processing' ? (
+                            <Loader2 className="w-5 h-5 text-blue-600" />
+                          ) : source.status === 'error' ? (
+                            <AlertCircle className="w-5 h-5 text-red-600" />
+                          ) : (
+                            <FileText className="w-5 h-5 text-blue-600" />
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{source.name}</p>
                           <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
@@ -342,6 +511,7 @@ export default function Dashboard() {
                         <button 
                           className="btn-round btn-secondary"
                           onClick={() => setShowUpload(true)}
+                          disabled={isUploading}
                         >
                           Tải nguồn lên
                         </button>
@@ -364,7 +534,7 @@ export default function Dashboard() {
                         }`}>
                           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                           <p className="text-xs mt-1 opacity-70">
-                            {message.timestamp.toLocaleTimeString('vi-VN', { 
+                            {(typeof message.timestamp === 'string' ? new Date(message.timestamp) : message.timestamp).toLocaleTimeString('vi-VN', { 
                               hour: '2-digit', 
                               minute: '2-digit' 
                             })}
@@ -410,7 +580,11 @@ export default function Dashboard() {
                           : 'bg-gray-300'
                       }`}
                     >
-                      <Send className="w-5 h-5 text-white" />
+                      {isSendingMessage ? (
+                        <Loader2 className="w-5 h-5 text-white animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5 text-white" />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -574,7 +748,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Mobile: Single Panel */}
+        {/* Mobile: Single Panel views */}
         <div className="lg:hidden flex-1 flex flex-col">
           {/* Sources Panel */}
           {activeTab === 'sources' && (
@@ -584,9 +758,14 @@ export default function Dashboard() {
                   <button 
                     className="btn-round btn-ghost flex-1"
                     onClick={() => setShowUpload(true)}
+                    disabled={isUploading}
                   >
-                    <Plus className="w-4 h-4" />
-                    Thêm
+                    {isUploading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    {isUploading ? 'Đang tải...' : 'Thêm'}
                   </button>
                   <button 
                     onClick={handleExplore}
@@ -602,7 +781,17 @@ export default function Dashboard() {
                     {sources.map((source) => (
                       <div key={source.id} className="p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-start gap-3">
-                          <FileText className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                          <div className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                            source.status === 'processing' ? 'animate-spin' : ''
+                          }`}>
+                            {source.status === 'processing' ? (
+                              <Loader2 className="w-5 h-5 text-blue-600" />
+                            ) : source.status === 'error' ? (
+                              <AlertCircle className="w-5 h-5 text-red-600" />
+                            ) : (
+                              <FileText className="w-5 h-5 text-blue-600" />
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">{source.name}</p>
                             <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
@@ -638,13 +827,13 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Mobile Chat Panel - Similar structure but condensed */}
+          {/* Chat Panel */}
           {activeTab === 'chat' && (
             <div className="flex-1 bg-white mx-4 my-4 rounded-2xl overflow-hidden flex flex-col">
               <div className="flex-1 p-4 overflow-y-auto">
                 {chatMessages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full">
-                    <div className="text-center">
+                    <div className="text-center max-w-md">
                       <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Upload className="w-5 h-5 text-blue-600" />
                       </div>
@@ -655,6 +844,7 @@ export default function Dashboard() {
                         <button 
                           className="btn-round btn-secondary"
                           onClick={() => setShowUpload(true)}
+                          disabled={isUploading}
                         >
                           Tải nguồn lên
                         </button>
@@ -677,7 +867,7 @@ export default function Dashboard() {
                         }`}>
                           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                           <p className="text-xs mt-1 opacity-70">
-                            {message.timestamp.toLocaleTimeString('vi-VN', { 
+                            {(typeof message.timestamp === 'string' ? new Date(message.timestamp) : message.timestamp).toLocaleTimeString('vi-VN', { 
                               hour: '2-digit', 
                               minute: '2-digit' 
                             })}
@@ -701,7 +891,7 @@ export default function Dashboard() {
               </div>
 
               <div className="p-4 border-t border-gray-100">
-                <div className="bg-gray-50 rounded-2xl border border-gray-200 p-3">
+                <div className="bg-white rounded-2xl border border-gray-200 p-3">
                   <div className="flex items-center gap-3">
                     <input
                       type="text"
@@ -709,7 +899,7 @@ export default function Dashboard() {
                       value={chatMessage}
                       onChange={(e) => setChatMessage(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                      className="flex-1 text-gray-900 bg-transparent outline-none text-sm"
+                      className="flex-1 text-gray-900 bg-transparent outline-none"
                       disabled={!canChat || isSendingMessage}
                     />
                     <span className="text-xs text-gray-400">{readySources.length} nguồn</span>
@@ -722,7 +912,11 @@ export default function Dashboard() {
                           : 'bg-gray-300'
                       }`}
                     >
-                      <Send className="w-5 h-5 text-white" />
+                      {isSendingMessage ? (
+                        <Loader2 className="w-5 h-5 text-white animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5 text-white" />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -730,26 +924,16 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Mobile Studio Panel - Similar to desktop but responsive */}
+          {/* Studio Panel */}
           {activeTab === 'studio' && (
             <div className="flex-1 bg-white mx-4 my-4 rounded-2xl overflow-hidden">
-              <div className="p-4 space-y-6 h-full overflow-y-auto">
+              <div className="p-4 space-y-6 overflow-y-auto h-full">
+                {/* Audio Overview Section */}
                 <div>
                   <div className="flex items-center gap-2 mb-4">
                     <h3 className="font-medium text-gray-900">Tổng quan bằng âm thanh</h3>
                   </div>
                   
-                  <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-3 mb-4">
-                    <div className="flex items-start gap-2">
-                      <span className="text-sm">🎉</span>
-                      <div>
-                        <p className="text-xs font-medium text-gray-900">
-                          Tạo bản Tổng quan bằng âm thanh ở nhiều ngôn ngữ hơn!
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="bg-gray-50 rounded-2xl p-4">
                     <div className="flex items-start gap-3">
                       <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
@@ -764,7 +948,7 @@ export default function Dashboard() {
                           <button 
                             onClick={() => toast('Tính năng tùy chỉnh sẽ sớm có!')}
                             disabled={!canUseStudio}
-                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            className={`px-4 py-2 rounded-full text-xs font-medium transition-all ${
                               canUseStudio 
                                 ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' 
                                 : 'bg-gray-200 text-gray-400'
@@ -775,7 +959,7 @@ export default function Dashboard() {
                           <button 
                             onClick={handleGenerateAudio}
                             disabled={!canUseStudio || isGeneratingAudio}
-                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            className={`px-4 py-2 rounded-full text-xs font-medium transition-all ${
                               canUseStudio && !isGeneratingAudio
                                 ? 'bg-blue-600 text-white hover:bg-blue-700' 
                                 : 'bg-gray-300 text-gray-500'
@@ -789,6 +973,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {/* Notes Section */}
                 <div>
                   <div className="flex items-center gap-2 mb-4">
                     <h3 className="font-medium text-gray-900">Ghi chú</h3>
@@ -798,7 +983,7 @@ export default function Dashboard() {
                     <button 
                       onClick={handleCreateNote}
                       disabled={!canUseStudio}
-                      className={`btn-round btn-ghost justify-center text-xs transition-all ${
+                      className={`btn-round btn-ghost justify-center transition-all ${
                         canUseStudio ? 'hover:bg-gray-100' : 'opacity-60'
                       }`}
                     >
@@ -808,32 +993,12 @@ export default function Dashboard() {
                     <button 
                       onClick={() => router.push('/dashboard/qa')}
                       disabled={!canUseStudio}
-                      className={`btn-round btn-ghost justify-center text-xs transition-all ${
+                      className={`btn-round btn-ghost justify-center transition-all ${
                         canUseStudio ? 'hover:bg-gray-100' : 'opacity-60'
                       }`}
                     >
                       <BookOpen className="w-4 h-4" />
                       Hướng dẫn học tập
-                    </button>
-                    <button 
-                      onClick={handleCreateNote}
-                      disabled={!canUseStudio}
-                      className={`btn-round btn-ghost justify-center text-xs transition-all ${
-                        canUseStudio ? 'hover:bg-gray-100' : 'opacity-60'
-                      }`}
-                    >
-                      <FileText className="w-4 h-4" />
-                      Tài liệu tóm tắt
-                    </button>
-                    <button 
-                      onClick={() => router.push('/dashboard/qa')}
-                      disabled={!canUseStudio}
-                      className={`btn-round btn-ghost justify-center text-xs transition-all ${
-                        canUseStudio ? 'hover:bg-gray-100' : 'opacity-60'
-                      }`}
-                    >
-                      <HelpCircle className="w-4 h-4" />
-                      Câu hỏi thường gặp
                     </button>
                   </div>
 
@@ -877,6 +1042,7 @@ export default function Dashboard() {
                 <button 
                   onClick={() => setShowUpload(false)}
                   className="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
+                  disabled={isUploading}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -892,111 +1058,32 @@ export default function Dashboard() {
               <div
                 {...getRootProps()}
                 className={`bg-gray-50 rounded-2xl p-12 text-center mb-8 cursor-pointer transition-colors ${
-                  isDragActive ? 'bg-blue-50 border-2 border-blue-300' : 'hover:bg-gray-100'
+                  isDragActive ? 'bg-blue-50 border-2 border-blue-300' : 
+                  isUploading ? 'bg-gray-100 cursor-not-allowed' :
+                  'hover:bg-gray-100'
                 }`}
               >
                 <input {...getInputProps()} />
                 <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Upload className="w-7 h-7 text-blue-600" />
+                  {isUploading ? (
+                    <Loader2 className="w-7 h-7 text-blue-600 animate-spin" />
+                  ) : (
+                    <Upload className="w-7 h-7 text-blue-600" />
+                  )}
                 </div>
                 <h3 className="text-sm font-medium text-gray-900 mb-2">
-                  {isDragActive ? 'Thả file ở đây...' : 'Tải nguồn lên'}
+                  {isDragActive ? 'Thả file ở đây...' : 
+                   isUploading ? 'Đang tải lên...' :
+                   'Tải nguồn lên'}
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
-                  {isDragActive ? 'Thả file để tải lên' : 'Kéo và thả hoặc chọn tệp để tải lên'}
+                  {isDragActive ? 'Thả file để tải lên' : 
+                   isUploading ? 'Vui lòng đợi...' :
+                   'Kéo và thả hoặc chọn tệp để tải lên'}
                 </p>
                 <p className="text-sm text-gray-500">
-                  Các loại tệp được hỗ trợ: PDF, .txt, Markdown, Âm thanh (ví dụ: mp3), Hình ảnh
+                  Các loại tệp được hỗ trợ: PDF, DOC, DOCX, TXT, Markdown, Âm thanh (mp3), Hình ảnh
                 </p>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-2xl p-4">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-6 h-6">
-                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-gray-700">
-                        <path d="M6.26 5.27L9.5 11H2.95L6.26 5.27zM14.74 5.27L18.05 11H11.5L14.74 5.27zM12 13.73L8.69 19.46H15.31L12 13.73z"/>
-                      </svg>
-                    </div>
-                    <h4 className="text-sm font-normal text-gray-900">Google Drive</h4>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <button 
-                      onClick={() => toast('Tính năng Google Drive sẽ sớm có!')}
-                      className="w-full bg-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-300 transition-colors"
-                    >
-                      <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                        <FileText className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-sm text-blue-600">Google Tài liệu</span>
-                    </button>
-                    
-                    <button 
-                      onClick={() => toast('Tính năng Google Slides sẽ sớm có!')}
-                      className="w-full bg-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-300 transition-colors"
-                    >
-                      <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                        <FileText className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-sm text-blue-600">Google Trang trình bày</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-2xl p-4">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-6 h-6">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-6 h-6 text-gray-700">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                      </svg>
-                    </div>
-                    <h4 className="text-sm font-normal text-gray-900">Liên kết</h4>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <button 
-                      onClick={() => toast('Tính năng Web URL sẽ sớm có!')}
-                      className="w-full bg-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-300 transition-colors"
-                    >
-                      <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                        <FileText className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-sm text-blue-600">Trang web</span>
-                    </button>
-                    
-                    <button 
-                      onClick={() => toast('Tính năng YouTube sẽ sớm có!')}
-                      className="w-full bg-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-300 transition-colors"
-                    >
-                      <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                        <Play className="w-3 h-3 text-white" />
-                      </div>
-                      <span className="text-sm text-blue-600">YouTube</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-2xl p-4">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-6 h-6">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-6 h-6 text-gray-700">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <h4 className="text-sm font-normal text-gray-900">Dán văn bản</h4>
-                  </div>
-                  
-                  <button 
-                    onClick={() => toast('Tính năng dán văn bản sẽ sớm có!')}
-                    className="w-full bg-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-300 transition-colors"
-                  >
-                    <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                      <FileText className="w-3 h-3 text-white" />
-                    </div>
-                    <span className="text-sm text-blue-600">Văn bản đã sao chép</span>
-                  </button>
-                </div>
               </div>
 
               <div className="flex items-center gap-4 mt-8 pt-6 border-t border-gray-100">
